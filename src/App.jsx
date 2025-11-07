@@ -1,4 +1,3 @@
-// src/App.jsx
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 
@@ -23,9 +22,15 @@ function App() {
   const [version, setVersion] = useState("");
 
   // Dependencies
-  const [dependencies, setDependencies] = useState([]);            // array of dep ids
-  const [depVersions, setDepVersions] = useState({});              // map: depId -> chosen version string
-  const [query, setQuery] = useState("");
+  const [dependencies, setDependencies] = useState([]);
+  const [depVersions, setDepVersions] = useState({});
+  const [showDepsModal, setShowDepsModal] = useState(false);
+  const [depsQuery, setDepsQuery] = useState("");
+
+  // Boilerplate Codes
+  const [boilerplateCodes, setBoilerplateCodes] = useState([]);
+  const [showBoilerplateModal, setShowBoilerplateModal] = useState(false);
+  const [boilerplateQuery, setBoilerplateQuery] = useState("");
 
   useEffect(() => {
     const fetchMetadata = async () => {
@@ -44,9 +49,7 @@ function App() {
         setType(data.type?.default ?? data.type?.values?.[0]?.id ?? "");
         setLanguage(data.language?.default ?? data.language?.values?.[0]?.id ?? "");
         setPackaging(data.packaging?.default ?? data.packaging?.values?.[0]?.id ?? "");
-        setBootVersion(
-          data.bootVersion?.default ?? data.bootVersion?.values?.[0]?.id ?? ""
-        );
+        setBootVersion(data.bootVersion?.default ?? data.bootVersion?.values?.[0]?.id ?? "");
         setJavaVersion(data.javaVersion?.default ?? data.javaVersion?.values?.[0]?.id ?? "");
 
         setGroupId(data.groupId?.default ?? "com.example");
@@ -56,7 +59,7 @@ function App() {
         setPackageName(data.packageName?.default ?? "com.example.demo");
         setVersion(data.version?.default ?? "0.0.1-SNAPSHOT");
 
-        // Seed per-dependency default versions if metadata provides them
+        // Seed per-dependency default versions
         const seed = {};
         (data.dependencies?.values ?? []).forEach((group) => {
           (group.values ?? []).forEach((dep) => {
@@ -85,15 +88,30 @@ function App() {
     );
   };
 
+  const toggleBoilerplateCode = (codeId) => {
+    setBoilerplateCodes((prev) =>
+      prev.includes(codeId) ? prev.filter((x) => x !== codeId) : [...prev, codeId]
+    );
+  };
+
   const setDependencyVersion = (depId, ver) => {
     setDepVersions((prev) => ({ ...prev, [depId]: ver }));
   };
 
+  const removeDependency = (depId) => {
+    setDependencies((prev) => prev.filter((x) => x !== depId));
+  };
+
+  const removeBoilerplate = (codeId) => {
+    setBoilerplateCodes((prev) => prev.filter((x) => x !== codeId));
+  };
+
   const clearDependencies = () => setDependencies([]);
+  const clearBoilerplateCodes = () => setBoilerplateCodes([]);
 
   const filteredGroups = useMemo(() => {
     if (!meta?.dependencies?.values) return [];
-    const q = query.trim().toLowerCase();
+    const q = depsQuery.trim().toLowerCase();
     if (!q) return meta.dependencies.values;
     return meta.dependencies.values
       .map((group) => {
@@ -104,10 +122,30 @@ function App() {
         return { ...group, values };
       })
       .filter((g) => g.values && g.values.length > 0);
-  }, [meta, query]);
+  }, [meta, depsQuery]);
+
+  const groupedBoilerplateCodes = useMemo(() => {
+    if (!meta?.boilerplateCodeOptions) return {};
+
+    const q = boilerplateQuery.trim().toLowerCase();
+    let options = meta.boilerplateCodeOptions;
+
+    if (q) {
+      options = options.filter((code) => {
+        const hay = `${code.id} ${code.name ?? ""} ${code.description ?? ""}`.toLowerCase();
+        return hay.includes(q);
+      });
+    }
+
+    return options.reduce((acc, code) => {
+      const type = code.type || "other";
+      if (!acc[type]) acc[type] = [];
+      acc[type].push(code);
+      return acc;
+    }, {});
+  }, [meta, boilerplateQuery]);
 
   const buildDependenciesParam = () => {
-    // For each selected dep, if a version was chosen and the meta actually offers versions, encode as depId:version
     const withVersions = dependencies.map((depId) => {
       const depMeta = findDepMeta(depId);
       const hasVersions = !!(depMeta && Array.isArray(depMeta.versions) && depMeta.versions.length);
@@ -126,6 +164,11 @@ function App() {
       if (hit) return hit;
     }
     return null;
+  };
+
+  const findBoilerplateMeta = (codeId) => {
+    if (!meta?.boilerplateCodeOptions) return null;
+    return meta.boilerplateCodeOptions.find((c) => c.id === codeId);
   };
 
   const handleGenerate = () => {
@@ -152,6 +195,10 @@ function App() {
       params.set("dependencies", buildDependenciesParam());
     }
 
+    if (boilerplateCodes.length > 0) {
+      params.set("boilerplateCode", boilerplateCodes.join(","));
+    }
+
     const url = `/starter.zip?${params.toString()}`;
     window.location.href = url;
   };
@@ -160,6 +207,8 @@ function App() {
   if (error) return <div className="error"><h2>Failed to load metadata</h2><p>{error}</p></div>;
   if (!meta) return <div className="error">No metadata available.</div>;
 
+  const hasBoilerplateCodes = meta.boilerplateCodeOptions && meta.boilerplateCodeOptions.length > 0;
+
   return (
     <div className="shell">
       <header className="app-header">
@@ -167,17 +216,12 @@ function App() {
           <span className="logo-dot" aria-hidden />
           <h1>DPW Project Initializer</h1>
         </div>
-        <div className="header-actions">
-          <button className="btn ghost" onClick={clearDependencies}>
-            Clear Dependencies ({dependencies.length})
-          </button>
-        </div>
       </header>
 
       <main className="layout">
         {/* Left: Configuration */}
         <section className="panel config">
-          <h2 className="panel-title">Configuration</h2>
+          <h2 className="panel-title">Project Configuration</h2>
 
           <div className="form-grid">
             <label className="field">
@@ -211,7 +255,7 @@ function App() {
               <span>Boot Version</span>
               <select value={bootVersion} onChange={(e) => setBootVersion(e.target.value)}>
                 {meta.bootVersion?.values?.map((v) => (
-                  <option key={v.id} value={v.id}>{v.name ?? v.id}</option>
+                  <option key={v.id} value={v.name}>{v.name ?? v.id}</option>
                 ))}
               </select>
             </label>
@@ -226,7 +270,7 @@ function App() {
             </label>
           </div>
 
-          <h3 className="subheading">Project metadata</h3>
+          <h3 className="subheading">Project Metadata</h3>
           <div className="form-grid two-col">
             <label className="field">
               <span>Group</span>
@@ -255,69 +299,258 @@ function App() {
           </div>
         </section>
 
-        {/* Right: Dependencies with optional version select */}
-        <section className="panel deps">
-          <div className="deps-header">
-            <h2 className="panel-title">Dependencies</h2>
-            <input
-              className="search"
-              placeholder="Search dependencies…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </div>
+        {/* Right: Selected Items */}
+        <section className="panel selections">
+          <h2 className="panel-title">Dependencies & Templates</h2>
 
-          <div className="dep-groups">
-            {filteredGroups.map((group) => (
-              <fieldset key={group.name} className="dep-group">
-                <legend>{group.name}</legend>
-                {(group.values || []).map((dep) => {
-                  const selected = dependencies.includes(dep.id);
-                  const hasVersions =
-                    Array.isArray(dep.versions) && dep.versions.length > 0;
-                  const chosenVer = depVersions[dep.id] || "";
+          {/* Dependencies Section */}
+          <div className="selection-section">
+            <div className="section-header">
+              <h3>Dependencies</h3>
+              <button 
+                className="btn primary-outline" 
+                onClick={() => setShowDepsModal(true)}
+              >
+                Add Dependencies
+              </button>
+            </div>
+
+            {dependencies.length === 0 ? (
+              <div className="empty-state">
+                <p>No dependencies selected</p>
+                <button 
+                  className="btn ghost" 
+                  onClick={() => setShowDepsModal(true)}
+                >
+                  Browse Dependencies
+                </button>
+              </div>
+            ) : (
+              <div className="selected-items">
+                {dependencies.map((depId) => {
+                  const depMeta = findDepMeta(depId);
+                  const hasVersions = depMeta && Array.isArray(depMeta.versions) && depMeta.versions.length > 0;
 
                   return (
-                    <div key={dep.id} className="dep-item">
-                      <label style={{ display: "flex", gap: 10, flex: 1 }}>
-                        <input
-                          type="checkbox"
-                          checked={selected}
-                          onChange={() => toggleDependency(dep.id)}
-                        />
-                        <div className="dep-texts" style={{ flex: 1 }}>
-                          <span className="dep-name">{dep.name ?? dep.id}</span>
-                          {dep.description ? (
-                            <span className="dep-desc">{dep.description}</span>
-                          ) : null}
-                        </div>
-                      </label>
-
+                    <div key={depId} className="selected-item">
+                      <div className="item-info">
+                        <span className="item-name">{depMeta?.name ?? depId}</span>
+                        {depMeta?.description && (
+                          <span className="item-desc">{depMeta.description}</span>
+                        )}
+                      </div>
+                      
                       {hasVersions && (
-                        <div className="field" style={{ width: 180 }}>
-                          <span>Version</span>
-                          <select
-                            value={chosenVer}
-                            onChange={(e) =>
-                              setDependencyVersion(dep.id, e.target.value)
-                            }
-                          >
-                            {dep.versions.map((v) => (
-                              <option key={v.id} value={v.id}>
-                                {v.name ?? v.id}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
+                        <select
+                          className="version-select"
+                          value={depVersions[depId] || ""}
+                          onChange={(e) => setDependencyVersion(depId, e.target.value)}
+                        >
+                          {depMeta.versions.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.name ?? v.id}
+                            </option>
+                          ))}
+                        </select>
                       )}
+                      
+                      <button 
+                        className="remove-btn" 
+                        onClick={() => removeDependency(depId)}
+                        aria-label="Remove dependency"
+                      >
+                        ×
+                      </button>
                     </div>
                   );
                 })}
-              </fieldset>
-            ))}
+              </div>
+            )}
           </div>
+
+          {/* Boilerplate Templates Section */}
+          {hasBoilerplateCodes && (
+            <div className="selection-section">
+              <div className="section-header">
+                <h3>API Integration Templates</h3>
+                <button 
+                  className="btn primary-outline" 
+                  onClick={() => setShowBoilerplateModal(true)}
+                >
+                  Add Templates
+                </button>
+              </div>
+
+              {boilerplateCodes.length === 0 ? (
+                <div className="empty-state">
+                  <p>No templates selected</p>
+                  <button 
+                    className="btn ghost" 
+                    onClick={() => setShowBoilerplateModal(true)}
+                  >
+                    Browse Templates
+                  </button>
+                </div>
+              ) : (
+                <div className="selected-items">
+                  {boilerplateCodes.map((codeId) => {
+                    const codeMeta = findBoilerplateMeta(codeId);
+
+                    return (
+                      <div key={codeId} className="selected-item">
+                        <div className="item-info">
+                          <span className="item-name">
+                            {codeMeta?.name ?? codeId}
+                            {codeMeta?.type && (
+                              <span className="type-badge">{codeMeta.type}</span>
+                            )}
+                          </span>
+                          {codeMeta?.description && (
+                            <span className="item-desc">{codeMeta.description}</span>
+                          )}
+                        </div>
+                        
+                        <button 
+                          className="remove-btn" 
+                          onClick={() => removeBoilerplate(codeId)}
+                          aria-label="Remove template"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </section>
       </main>
+
+      {/* Dependencies Modal */}
+      {showDepsModal && (
+        <Modal 
+          title="Add Dependencies" 
+          onClose={() => {
+            setShowDepsModal(false);
+            setDepsQuery("");
+          }}
+        >
+          <div className="modal-search">
+            <input
+              className="search-input"
+              placeholder="Search dependencies…"
+              value={depsQuery}
+              onChange={(e) => setDepsQuery(e.target.value)}
+              autoFocus
+            />
+          </div>
+
+          <div className="modal-content">
+            {filteredGroups.map((group) => (
+              <div key={group.name} className="modal-group">
+                <h4 className="group-title">{group.name}</h4>
+                {(group.values || []).map((dep) => {
+                  const selected = dependencies.includes(dep.id);
+
+                  return (
+                    <label key={dep.id} className="modal-item">
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => toggleDependency(dep.id)}
+                      />
+                      <div className="modal-item-info">
+                        <span className="modal-item-name">{dep.name ?? dep.id}</span>
+                        {dep.description && (
+                          <span className="modal-item-desc">{dep.description}</span>
+                        )}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            ))}
+            
+            {filteredGroups.length === 0 && (
+              <div className="no-results">
+                <p>No dependencies found matching "{depsQuery}"</p>
+              </div>
+            )}
+          </div>
+
+          <div className="modal-footer">
+            <button className="btn ghost" onClick={() => setShowDepsModal(false)}>
+              Done
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Boilerplate Modal */}
+      {showBoilerplateModal && (
+        <Modal 
+          title="Add API Integration Templates" 
+          onClose={() => {
+            setShowBoilerplateModal(false);
+            setBoilerplateQuery("");
+          }}
+        >
+          <div className="modal-search">
+            <input
+              className="search-input"
+              placeholder="Search templates…"
+              value={boilerplateQuery}
+              onChange={(e) => setBoilerplateQuery(e.target.value)}
+              autoFocus
+            />
+          </div>
+
+          <div className="modal-content">
+            {Object.entries(groupedBoilerplateCodes).map(([typeName, codes]) => (
+              <div key={typeName} className="modal-group">
+                <h4 className="group-title">
+                  {typeName.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")}
+                </h4>
+                {codes.map((code) => {
+                  const selected = boilerplateCodes.includes(code.id);
+
+                  return (
+                    <label key={code.id} className="modal-item">
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => toggleBoilerplateCode(code.id)}
+                      />
+                      <div className="modal-item-info">
+                        <span className="modal-item-name">
+                          {code.name ?? code.id}
+                          <span className="type-badge-inline">{code.type}</span>
+                        </span>
+                        {code.description && (
+                          <span className="modal-item-desc">{code.description}</span>
+                        )}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            ))}
+
+            {Object.keys(groupedBoilerplateCodes).length === 0 && (
+              <div className="no-results">
+                <p>No templates found matching "{boilerplateQuery}"</p>
+              </div>
+            )}
+          </div>
+
+          <div className="modal-footer">
+            <button className="btn ghost" onClick={() => setShowBoilerplateModal(false)}>
+              Done
+            </button>
+          </div>
+        </Modal>
+      )}
 
       <footer className="generate-bar">
         <div className="summary">
@@ -327,11 +560,44 @@ function App() {
           <span className="chip">Boot {bootVersion}</span>
           <span className="chip">Java {javaVersion}</span>
           <span className="chip accent">{dependencies.length} deps</span>
+          {boilerplateCodes.length > 0 && (
+            <span className="chip accent">{boilerplateCodes.length} templates</span>
+          )}
         </div>
         <button onClick={handleGenerate} className="btn primary">
           Generate Project
         </button>
       </footer>
+    </div>
+  );
+}
+
+// Modal Component
+function Modal({ title, children, onClose }) {
+  useEffect(() => {
+    const handleEsc = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleEsc);
+    document.body.style.overflow = "hidden";
+    
+    return () => {
+      document.removeEventListener("keydown", handleEsc);
+      document.body.style.overflow = "unset";
+    };
+  }, [onClose]);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2>{title}</h2>
+          <button className="modal-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        {children}
+      </div>
     </div>
   );
 }
